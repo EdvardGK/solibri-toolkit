@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Workdir artifacts
+*.bcfzip
+*.bcf
+*.smc.tmp
+
+# IDE
+.vscode/
+.idea/
