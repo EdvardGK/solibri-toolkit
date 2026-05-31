@@ -1310,25 +1310,56 @@ private static java.util.Map<String, String> parseFlatJsonObject(String body) {
 
                 // Mutate the slide graph on the EDT.
                 respond(ex, 200, onEdt(() -> {
+                    // CRITICAL ORDERING: add slide to presentation FIRST, then configure.
+                    // Pre-configured-then-add was discovered to lose all setX values (title,
+                    // stage, priority, type, components all reset). Configure after add works.
                     Slide s = Slide.create();
-                    if (fTitle != null) s.setTitle(fTitle);
-                    if (fDescription != null) s.setDescription(fDescription);
-                    if (fStatus != null) s.setStatus(fStatus);
-                    if (fStage != null) s.setStage(fStage);
-                    if (fPriority != null) s.setPriority(fPriority);
-                    if (fType != null) s.setType(fType);
-                    if (fResponsibilities != null && !fResponsibilities.isEmpty()) {
-                        s.setResponsibilities(new ArrayList<>(fResponsibilities));
-                    }
-                    if (!fLabels.isEmpty()) s.setLabels(fLabels);
-                    if (fDueDate != null && !fDueDate.isEmpty()) {
-                        try { s.setDueDate(LocalDate.parse(fDueDate)); } catch (Exception ignore) {}
-                    }
-                    if (!fComponents.isEmpty()) s.setComponents(fComponents);
                     boolean added = fTarget.addSlide(s);
+                    if (added) {
+                        if (fTitle != null) s.setTitle(fTitle);
+                        if (fDescription != null) s.setDescription(fDescription);
+                        if (fStatus != null) s.setStatus(fStatus);
+                        if (fStage != null) s.setStage(fStage);
+                        if (fPriority != null) s.setPriority(fPriority);
+                        if (fType != null) s.setType(fType);
+                        if (fResponsibilities != null && !fResponsibilities.isEmpty()) {
+                            s.setResponsibilities(new ArrayList<>(fResponsibilities));
+                        }
+                        if (!fLabels.isEmpty()) s.setLabels(fLabels);
+                        if (fDueDate != null && !fDueDate.isEmpty()) {
+                            try { s.setDueDate(LocalDate.parse(fDueDate)); } catch (Exception ignore) {}
+                        }
+                        if (!fComponents.isEmpty()) s.setComponents(fComponents);
+                    }
+                    // Per-slide viewpoint capture: fit the 3D camera to the slide's components,
+                    // grab a snapshot, attach as a Viewpoint. Without this, every slide shares the
+                    // default screenshot.
+                    boolean viewpointAdded = false;
+                    String viewpointErr = "";
+                    if (added && !fComponents.isEmpty()) {
+                        try {
+                            com.solibri.smc.api.threed.ThreeD td = SMC.get3D();
+                            com.solibri.smc.api.threed.Camera cam = td.getCamera();
+                            cam.lookAt(fComponents);
+                            java.util.Optional<java.awt.image.BufferedImage> imgOpt = td.get3DSnapshot();
+                            com.solibri.smc.api.communication.Viewpoint vp =
+                                    com.solibri.smc.api.communication.Viewpoint.create();
+                            vp.setCameraState(td.createCameraState());
+                            if (imgOpt.isPresent()) {
+                                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                                javax.imageio.ImageIO.write(imgOpt.get(), "PNG", baos);
+                                vp.setImagePngBytes(baos.toByteArray());
+                            }
+                            viewpointAdded = s.addViewpoint(vp);
+                        } catch (Exception vpErr) {
+                            viewpointErr = String.valueOf(vpErr.getMessage());
+                        }
+                    }
                     return "{\"presentationId\":" + str(fTarget.getUniqueId())
                             + ",\"slideId\":" + str(s.getUniqueId())
                             + ",\"added\":" + added
+                            + ",\"viewpointAdded\":" + viewpointAdded
+                            + (viewpointErr.isEmpty() ? "" : ",\"viewpointError\":" + str(viewpointErr))
                             + ",\"componentsRequested\":" + fRequested
                             + ",\"componentsResolved\":" + fComponents.size() + "}";
                 }));
