@@ -38,6 +38,16 @@ import com.solibri.saf.core.resource.RecentResource;
 import com.solibri.resource.Resource;
 // Internal automation keyword: opens .smc/.smcx project files in-JVM (no built-in 10876 REST server needed).
 import com.solibri.smc.robot.keywords.ProjectRobot;
+// Internal ruleset authoring: install a JSON-defined ruleset into the open project.
+import com.solibri.saf.plugins.checkingplugin.CheckingPlugin;
+import com.solibri.saf.plugins.checkingplugin.actions.OpenRuleSetAction;
+import com.solibri.sae.greenox.ConstraintModel;
+import com.solibri.api.impl.checking.SMCRuleset;
+import com.solibri.smc.api.checking.Ruleset;
+import com.solibri.ruleset.RulesImporter;
+import com.solibri.proxy.RSMBasedRuleProvider;
+import com.solibri.api.impl.model.CoreModelWrapper;
+import com.solibri.sae.solibri.construction.SModel;
 
 import com.solibri.smc.api.checking.Decision;
 import com.solibri.smc.api.checking.ResultCategory;
@@ -133,6 +143,7 @@ public final class SuperuserServer implements View {
             s.createContext(BASE + "/component", SuperuserServer::handleComponentByGuid);
             s.createContext(BASE + "/select", SuperuserServer::handleSelect);
             s.createContext(BASE + "/shutdown", SuperuserServer::handleShutdown);
+            s.createContext(BASE + "/rulesets/install", SuperuserServer::handleRulesetInstall);
             s.createContext(BASE + "/results/full", SuperuserServer::handleResultsFull);
             s.createContext(BASE + "/results/byRule", SuperuserServer::handleResultsByRule);
             s.createContext(BASE + "/results/bySeverity", SuperuserServer::handleResultsBySeverity);
@@ -2000,6 +2011,107 @@ private static java.util.Map<String, String> parseFlatJsonObject(String body) {
         try { return Double.parseDouble(m.group(1)); } catch (NumberFormatException nfe) { return null; }
     }
 
+
+    /**
+     * POST /rulesets/install
+     * Body: a complete ruleset as JSON (same shape as Ruleset.toJson()). The JSON is
+     * written to a temp .cset file and loaded via the internal OpenRuleSetAction, which
+     * registers the ruleset with the open project. After this call, /rulesets shows the
+     * new entry and /check (or /rules) can target it.
+     *
+     * Returns: {installed, uniqueId, name, ruleCount, tempFile, rulesetsInProject}.
+     */
+    private static void handleRulesetInstall(HttpExchange ex) throws IOException {
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respond(ex, 405, "{\"error\":\"use POST with the ruleset JSON as the request body\"}");
+            return;
+        }
+        if (SMC.getModel() == null) {
+            respond(ex, 409, "{\"error\":\"no project open\"}");
+            return;
+        }
+        byte[] body = ex.getRequestBody().readAllBytes();
+        if (body == null || body.length == 0) {
+            respond(ex, 400, "{\"error\":\"empty body; POST the ruleset JSON\"}");
+            return;
+        }
+        try {
+            // Architecture: JSON -> RulesImporter -> ConstraintModel -> CheckingPlugin.addModel.
+            // (We tried writing the JSON to a .cset file + OpenRuleSetAction.openModel first;
+            // .cset expects Java-serialized binary, so the parser barfed with a "Read error".)
+            final String json = new String(body, StandardCharsets.UTF_8);
+
+            // Get the internal SModel from the open project. SMCModel implements CoreModelWrapper,
+            // and SModel extends redox.Model, so the wrapper's getCoreModel() downcasts cleanly.
+            final SModel[] smHolder = new SModel[1];
+            String getModelErr = onEdt(() -> {
+                Model m = SMC.getModel();
+                if (m == null) return "no project open";
+                if (!(m instanceof CoreModelWrapper)) return "model is not a CoreModelWrapper: " + m.getClass().getName();
+                smHolder[0] = (SModel) ((CoreModelWrapper) m).getCoreModel();
+                return null;
+            });
+            if (getModelErr != null && !getModelErr.startsWith("{\"")) {
+                respond(ex, 409, "{\"error\":" + str(getModelErr) + "}");
+                return;
+            }
+            final SModel sm = smHolder[0];
+            if (sm == null) {
+                respond(ex, 500, "{\"error\":\"could not extract SModel from open project\"}");
+                return;
+            }
+            CheckingPlugin cp = CheckingPlugin.getInstance();
+            if (cp == null) {
+                respond(ex, 500, "{\"error\":\"CheckingPlugin.getInstance() returned null\"}");
+                return;
+            }
+            // Import + install on the EDT (constraint model mutation touches UI-bound state).
+            final CheckingPlugin cpFinal = cp;
+            int rulesetsBefore;
+            try { rulesetsBefore = SMC.getModel().getRulesets().size(); } catch (Exception e) { rulesetsBefore = -1; }
+            ConstraintModel cm = onEdtT(() -> {
+                RulesImporter importer = new RulesImporter(sm, new RSMBasedRuleProvider());
+                ConstraintModel out = importer.importRuleSet(json);
+                if (out != null) cpFinal.addModel(out);
+                return out;
+            });
+            if (cm == null) {
+                respond(ex, 500, "{\"error\":\"RulesImporter.importRuleSet returned null; JSON may be malformed or reference unknown rule classes\"}");
+                return;
+            }
+            SMCRuleset rs = new SMCRuleset(cm);
+            String uid = "";
+            String name = "";
+            int ruleCount = 0;
+            try { uid = rs.getUniqueId(); } catch (Exception ignore) {}
+            try { name = rs.getName(); } catch (Exception ignore) {}
+            try { ruleCount = rs.getChildren() != null ? rs.getChildren().size() : 0; } catch (Exception ignore) {}
+            int rulesetsAfter = -1;
+            try { rulesetsAfter = SMC.getModel().getRulesets().size(); } catch (Exception ignore) {}
+            respond(ex, 200, "{\"installed\":true"
+                    + ",\"uniqueId\":" + str(uid)
+                    + ",\"name\":" + str(name)
+                    + ",\"topLevelChildren\":" + ruleCount
+                    + ",\"rulesetsBefore\":" + rulesetsBefore
+                    + ",\"rulesetsAfter\":" + rulesetsAfter + "}");
+        } catch (Exception e) {
+            respond(ex, 500, "{\"error\":" + str(String.valueOf(e.getMessage())) + "}");
+        }
+    }
+
+    /** Run a typed callable on the EDT, returning its result. Mirrors onEdt() but for T not String. */
+    private static <T> T onEdtT(java.util.concurrent.Callable<T> body) throws Exception {
+        @SuppressWarnings("unchecked")
+        Object[] holder = new Object[]{null};
+        Exception[] err = new Exception[]{null};
+        Runnable r = () -> { try { holder[0] = body.call(); } catch (Exception e) { err[0] = e; } };
+        if (javax.swing.SwingUtilities.isEventDispatchThread()) r.run();
+        else javax.swing.SwingUtilities.invokeAndWait(r);
+        if (err[0] != null) throw err[0];
+        @SuppressWarnings("unchecked")
+        T result = (T) holder[0];
+        return result;
+    }
 
     private static String resultJson(Result r) {
         List<String> guids = new ArrayList<>();
