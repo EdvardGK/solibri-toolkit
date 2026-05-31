@@ -48,6 +48,10 @@ import com.solibri.ruleset.RulesImporter;
 import com.solibri.proxy.RSMBasedRuleProvider;
 import com.solibri.api.impl.model.CoreModelWrapper;
 import com.solibri.sae.solibri.construction.SModel;
+// Discipline + per-submodel metadata setters (internal)
+import com.solibri.saf.plugins.modelhandling.BuildingIndustryDomains;
+import com.solibri.saf.plugins.modelhandling.DisciplineTrackingUtil;
+import com.solibri.sae.redox.Entity;
 
 import com.solibri.smc.api.checking.Decision;
 import com.solibri.smc.api.checking.ResultCategory;
@@ -144,6 +148,9 @@ public final class SuperuserServer implements View {
             s.createContext(BASE + "/select", SuperuserServer::handleSelect);
             s.createContext(BASE + "/shutdown", SuperuserServer::handleShutdown);
             s.createContext(BASE + "/rulesets/install", SuperuserServer::handleRulesetInstall);
+            s.createContext(BASE + "/disciplines", SuperuserServer::handleDisciplines);
+            s.createContext(BASE + "/models/", SuperuserServer::handleModelsSubresource);
+            s.createContext(BASE + "/classifications/createBulk", SuperuserServer::handleClassificationCreateBulk);
             s.createContext(BASE + "/results/full", SuperuserServer::handleResultsFull);
             s.createContext(BASE + "/results/byRule", SuperuserServer::handleResultsByRule);
             s.createContext(BASE + "/results/bySeverity", SuperuserServer::handleResultsBySeverity);
@@ -2128,6 +2135,199 @@ private static java.util.Map<String, String> parseFlatJsonObject(String body) {
         } catch (Exception e) {
             respond(ex, 500, "{\"error\":" + str(String.valueOf(e.getMessage())) + "}");
         }
+    }
+
+    /** BuildingIndustryDomains is a typesafe-enum (not java.lang.Enum) - use reflection
+     *  to enumerate its public static final instances by field name. Cached. */
+    private static volatile java.util.Map<String, BuildingIndustryDomains> _disciplineMap;
+    private static java.util.Map<String, BuildingIndustryDomains> getDisciplineMap() {
+        java.util.Map<String, BuildingIndustryDomains> m = _disciplineMap;
+        if (m != null) return m;
+        synchronized (SuperuserServer.class) {
+            if (_disciplineMap != null) return _disciplineMap;
+            java.util.Map<String, BuildingIndustryDomains> built = new java.util.LinkedHashMap<>();
+            for (java.lang.reflect.Field f : BuildingIndustryDomains.class.getDeclaredFields()) {
+                int mod = f.getModifiers();
+                if (java.lang.reflect.Modifier.isStatic(mod)
+                    && java.lang.reflect.Modifier.isFinal(mod)
+                    && java.lang.reflect.Modifier.isPublic(mod)
+                    && f.getType() == BuildingIndustryDomains.class) {
+                    try { built.put(f.getName(), (BuildingIndustryDomains) f.get(null)); }
+                    catch (IllegalAccessException ignore) {}
+                }
+            }
+            _disciplineMap = built;
+            return built;
+        }
+    }
+
+    /** GET /disciplines - list BuildingIndustryDomains constants (valid values for /models/{uuid}/discipline). */
+    private static void handleDisciplines(HttpExchange ex) throws IOException {
+        List<String> out = new ArrayList<>();
+        for (String n : getDisciplineMap().keySet()) out.add(str(n));
+        respond(ex, 200, "{\"count\":" + out.size() + ",\"disciplines\":" + arr(out) + "}");
+    }
+
+    /** Dispatcher for /models/{uuid}/{metadata|discipline}. */
+    private static void handleModelsSubresource(HttpExchange ex) throws IOException {
+        String path = ex.getRequestURI().getPath();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            java.util.regex.Pattern.quote(BASE) + "/models/([^/]+)/(metadata|discipline)").matcher(path);
+        if (!m.find()) { respond(ex, 400, "{\"error\":\"path must be /models/{uuid}/(metadata|discipline)\"}"); return; }
+        String uuidStr = java.net.URLDecoder.decode(m.group(1), StandardCharsets.UTF_8);
+        String sub = m.group(2);
+        java.util.UUID uuid;
+        try { uuid = java.util.UUID.fromString(uuidStr); }
+        catch (IllegalArgumentException iae) { respond(ex, 400, "{\"error\":\"invalid UUID\"}"); return; }
+        if (SMC.getModel() == null) { respond(ex, 409, "{\"error\":\"no project open\"}"); return; }
+        if (sub.equals("metadata")) {
+            if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+                respond(ex, 405, "{\"error\":\"use GET\"}"); return;
+            }
+            final java.util.UUID fUuid = uuid;
+            respond(ex, 200, onEdt(() -> {
+                for (Model s : SMC.getModel().getSubModels()) {
+                    if (fUuid.equals(s.getUUID())) {
+                        Map<String, String> md = s.getMetadata();
+                        List<String> entries = new ArrayList<>();
+                        if (md != null) for (Map.Entry<String, String> e : md.entrySet())
+                            entries.add(str(e.getKey()) + ":" + str(e.getValue()));
+                        return "{\"uuid\":" + str(fUuid.toString())
+                                + ",\"name\":" + str(s.getName())
+                                + ",\"metadata\":{" + String.join(",", entries) + "}}";
+                    }
+                }
+                return "{\"error\":\"submodel not found: " + fUuid + "\"}";
+            }));
+            return;
+        }
+        // sub.equals("discipline")
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respond(ex, 405, "{\"error\":\"use POST /models/{uuid}/discipline?value=ENUM (GET /disciplines for valid values)\"}");
+            return;
+        }
+        String value = query(ex).getOrDefault("value", "");
+        if (value.isEmpty()) { respond(ex, 400, "{\"error\":\"value query param required\"}"); return; }
+        final BuildingIndustryDomains discipline = getDisciplineMap().get(value.toUpperCase());
+        if (discipline == null) {
+            respond(ex, 400, "{\"error\":\"unknown discipline '" + value + "'; GET /disciplines for valid values\"}");
+            return;
+        }
+        final java.util.UUID fUuid = uuid;
+        respond(ex, 200, onEdt(() -> {
+            for (Model s : SMC.getModel().getSubModels()) {
+                if (fUuid.equals(s.getUUID())) {
+                    if (!(s instanceof CoreModelWrapper)) return "{\"error\":\"submodel not a CoreModelWrapper\"}";
+                    com.solibri.sae.redox.Model core = ((CoreModelWrapper) s).getCoreModel();
+                    if (!(core instanceof SModel)) return "{\"error\":\"core model is not an SModel: " + core.getClass().getName() + "\"}";
+                    SModel sm = (SModel) core;
+                    DisciplineTrackingUtil.trackDisciplineAssignedToModel(sm, discipline, true);
+                    // Reverse-lookup our enum's field name for the response
+                    String discName = value.toUpperCase();
+                    return "{\"set\":true,\"model\":" + str(s.getName())
+                            + ",\"discipline\":" + str(discName) + "}";
+                }
+            }
+            return "{\"error\":\"submodel not found: " + fUuid + "\"}";
+        }));
+    }
+
+    /**
+     * POST /classifications/createBulk
+     * Body shape (manually parsed - flat-ish):
+     *   { "name": "Skiplum_ARK_Storey",
+     *     "assignments": { "C - Plan 1": ["guid1","guid2",...],
+     *                      "C - Plan 2": ["guid3", ...], ... } }
+     * Creates a Classification via ClassificationPlugin.createClassificationIfNeeded,
+     * resolves GUIDs to Components in one model scan, bulk-assigns per class, installs.
+     */
+    private static void handleClassificationCreateBulk(HttpExchange ex) throws IOException {
+        if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+            respond(ex, 405, "{\"error\":\"use POST with body {name, assignments:{className:[guid,...]}}\"}");
+            return;
+        }
+        if (SMC.getModel() == null) { respond(ex, 409, "{\"error\":\"no project open\"}"); return; }
+        String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String name = extractJsonString(body, "name");
+        if (name == null || name.isEmpty()) {
+            respond(ex, 400, "{\"error\":\"name field required\"}"); return;
+        }
+        // Parse {"className": [...guids...]} pairs out of the "assignments" object.
+        // Strategy: locate the assignments block, then iterate per "key": [array] match.
+        java.util.regex.Matcher asMatcher = java.util.regex.Pattern.compile(
+            "\"assignments\"\\s*:\\s*\\{([\\s\\S]*?)\\}\\s*[,}]").matcher(body);
+        if (!asMatcher.find()) {
+            respond(ex, 400, "{\"error\":\"assignments object missing\"}"); return;
+        }
+        String inner = asMatcher.group(1);
+        java.util.regex.Matcher entryRe = java.util.regex.Pattern.compile(
+            "\"((?:[^\"\\\\]|\\\\.)*)\"\\s*:\\s*\\[([^\\]]*)\\]").matcher(inner);
+        java.util.regex.Pattern guidRe = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+        // class -> set of GUIDs
+        Map<String, java.util.Set<String>> classToGuids = new java.util.LinkedHashMap<>();
+        int totalGuids = 0;
+        while (entryRe.find()) {
+            String cls = entryRe.group(1).replace("\\\"", "\"").replace("\\\\", "\\");
+            String arr = entryRe.group(2);
+            java.util.Set<String> guids = new java.util.HashSet<>();
+            java.util.regex.Matcher gm = guidRe.matcher(arr);
+            while (gm.find()) {
+                guids.add(gm.group(1).replace("\\\"", "\"").replace("\\\\", "\\"));
+            }
+            if (!guids.isEmpty()) { classToGuids.put(cls, guids); totalGuids += guids.size(); }
+        }
+        if (classToGuids.isEmpty()) {
+            respond(ex, 400, "{\"error\":\"no non-empty class -> guid assignments parsed\"}"); return;
+        }
+        // Pre-resolve each GUID -> Component (off-EDT, single model scan).
+        java.util.Set<String> targets = new java.util.HashSet<>();
+        for (java.util.Set<String> v : classToGuids.values()) targets.addAll(v);
+        java.util.concurrent.ConcurrentHashMap<String, Component> guidToComp = new java.util.concurrent.ConcurrentHashMap<>();
+        try {
+            SMC.getModel().getComponents(c -> {
+                String g = c.getGUID();
+                if (targets.contains(g)) guidToComp.put(g, c);
+                return false;
+            });
+        } catch (Exception e) {
+            respond(ex, 500, "{\"error\":\"component scan failed: " + e.getMessage() + "\"}"); return;
+        }
+        // Now on EDT: create classification + assign + install.
+        final String fName = name;
+        final Map<String, java.util.Set<String>> fMap = classToGuids;
+        final java.util.concurrent.ConcurrentHashMap<String, Component> fGuidToComp = guidToComp;
+        respond(ex, 200, onEdt(() -> {
+            try {
+                ClassificationPlugin cp = ClassificationPlugin.getInstance();
+                if (cp == null) return "{\"error\":\"ClassificationPlugin.getInstance() returned null\"}";
+                Classification cls = cp.createClassificationIfNeeded(fName);
+                if (cls == null) return "{\"error\":\"createClassificationIfNeeded returned null\"}";
+                int assignedCount = 0; int classes = 0; int missing = 0;
+                for (Map.Entry<String, java.util.Set<String>> e : fMap.entrySet()) {
+                    String className = e.getKey();
+                    java.util.Set<Entity> entities = new java.util.HashSet<>();
+                    for (String guid : e.getValue()) {
+                        Component c = fGuidToComp.get(guid);
+                        if (c == null) { missing++; continue; }
+                        if (c instanceof Entity) entities.add((Entity) c);
+                        else missing++;
+                    }
+                    if (!entities.isEmpty()) {
+                        cls.setClassification(entities, className);
+                        assignedCount += entities.size();
+                        classes++;
+                    }
+                }
+                cp.addClassificationToModel(cls);
+                return "{\"created\":true,\"name\":" + str(fName)
+                        + ",\"classes\":" + classes
+                        + ",\"assignedComponents\":" + assignedCount
+                        + ",\"requestedComponents\":" + (assignedCount + missing)
+                        + ",\"missing\":" + missing + "}";
+            } catch (Exception ex2) {
+                return "{\"error\":" + str(String.valueOf(ex2.getMessage())) + "}";
+            }
+        }));
     }
 
     /** Run a typed callable on the EDT, returning its result. Mirrors onEdt() but for T not String. */
