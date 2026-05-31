@@ -334,6 +334,27 @@ class SuperuserClient:
         target = 'selection' | 'model'. -> {fit, target, components}."""
         return self._post("threed/fit", query={"target": target}) or {}
 
+    # ---- ruleset authoring (DISRUPTIVE: attaches new ruleset to open project) -----
+    def install_ruleset(self, ruleset_json: str | dict, timeout: float = 300.0) -> dict:
+        """Install a ruleset into the open project from its JSON definition.
+
+        ruleset_json: either a JSON string (same shape as Ruleset.toJson() output) or a
+        dict that will be json.dumps'd. The plugin imports via RulesImporter +
+        CheckingPlugin.addModel - no temp files, no UI prompts. Returns:
+          {installed, uniqueId, name, topLevelChildren, rulesetsBefore, rulesetsAfter}
+        DISRUPTIVE: mutates the open project's ruleset list.
+        """
+        if isinstance(ruleset_json, dict):
+            body = json.dumps(ruleset_json).encode("utf-8")
+        elif isinstance(ruleset_json, str):
+            body = ruleset_json.encode("utf-8")
+        else:
+            raise ValueError("ruleset_json must be str or dict")
+        # _post takes a body via the data param; preserve content-type as application/json
+        _, resp = self._request("POST", "rulesets/install", data=body,
+                                 headers={"Content-Type": "application/json"}, timeout=timeout)
+        return json.loads(resp.decode("utf-8")) if resp else {}
+
     # ---- lifecycle (DISRUPTIVE: closes the whole application) -----------
     def shutdown(self, force: bool = False) -> dict:
         """Stop the running Solibri instance. force=False is graceful (SMC.shutdown);

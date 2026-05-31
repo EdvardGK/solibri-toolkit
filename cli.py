@@ -303,6 +303,9 @@ def cmd_su(args):
             print(f"wrote {r.get('size', 0)} bytes -> {r.get('path')}  [{r.get('version')}/{r.get('scope')}]")
         else:
             _dump(r)
+    elif s == "ruleset-install":
+        with open(args.file, "r", encoding="utf-8") as fh:
+            _dump(sc.install_ruleset(fh.read()))
     # ito-full-coverage
     elif s == "ito":
         r = sc.ito()
@@ -437,6 +440,7 @@ def main(argv=None):
     spcr = su_sub.add_parser("presentation-create"); spcr.add_argument("name"); spcr.add_argument("--prefix", default=None)
     spsa = su_sub.add_parser("slide-add"); spsa.add_argument("presentation_id"); spsa.add_argument("--title", required=True); spsa.add_argument("--description", default=None); spsa.add_argument("--status", default=None); spsa.add_argument("--stage", default=None); spsa.add_argument("--priority", default=None); spsa.add_argument("--type", dest="slide_type", default=None); spsa.add_argument("--due", dest="due_date", default=None, help="ISO date YYYY-MM-DD"); spsa.add_argument("--component", action="append", default=[], help="IFC GUID (repeatable)"); spsa.add_argument("--responsibility", action="append", default=[]); spsa.add_argument("--label", action="append", default=[])
     sbcf = su_sub.add_parser("bcfxml-export"); sbcf.add_argument("file"); sbcf.add_argument("--version", default="V2_1", choices=["V1_0","V2_0","V2_1","V3_0"]); sbcf.add_argument("--scope", default="ALL", choices=["ALL","SELECTED","MARKED"])
+    sri = su_sub.add_parser("ruleset-install"); sri.add_argument("file", help="path to a ruleset JSON file (Ruleset.toJson() shape)")
     # ito-full-coverage (wave 1)
     su_sub.add_parser("ito")
     sic = su_sub.add_parser("ito-calculate"); sic.add_argument("--id", help="ItoDefinition UUID; omit to calculate all"); sic.add_argument("--yes", action="store_true", help="required (blocks, mutates live ITO state)")
