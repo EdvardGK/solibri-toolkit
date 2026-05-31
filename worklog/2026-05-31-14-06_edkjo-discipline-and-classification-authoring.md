@@ -62,9 +62,48 @@ Top spaces by component count (Pareto for triage scoping):
 
 ## State / next
 
-LBK_claude.smc now contains: `Skiplum_TMK_Claude_v1` ruleset, `Plan 1 review v2` deck
-(16 slides with per-slide camera-fit viewpoints), `Skiplum_ARK_Storey_Full` +
-`Skiplum_ARK_Space` classifications. `LBK_RIVv_C` has discipline=VENTILATION set live.
+**On-disk state** (in `C:\tmp\lbk_claude\`):
+
+| File | Size | What |
+|---|---:|---|
+| `LBK_C_SAMLETMODELL_Ed_claude.smc` | 632 MB | LBK working copy, **last saved at 12:01:11** (save-as time). Original on ACC untouched. |
+| `LBK_C_SAMLETMODELL_Ed_claude.smc_org.bak` | 624 MB | Solibri's auto-backup of an earlier state |
+| `lbk_ark_space_assignment.json` | 13.8 MB | GUID → `{ARK_storey, ARK_space_name, longname}` for 132,505 components (8 storeys / 274 spaces / 84% federation coverage) |
+| `lbk_ark_spaces.json` | 114 KB | 506 ARK spaces with XY bboxes + storey Z-ranges (cached for spatial assignment) |
+| `lbk_federation_catalog.json` | 342 KB | Full per-model pset/property catalog for 13 submodels |
+| `lbk_storey_index.json` | 6.2 MB | Self-reported storey index (pre-ARK-truth; less authoritative) |
+| `C:/tmp/lbk_flagged_guids.pkl` | — | 3,349 BCF-derived flagged GUIDs from TMK10_Plan6 round |
+
+**In-memory only — NOT on disk** (in the current Solibri session; lost on next restart
+unless persisted via `cli.py su project-save --yes`):
+- Ruleset `Skiplum_TMK_Claude_v1` (cloned from Skiplum_TMK via /rulesets/install)
+- Presentation `Plan 1 review v2 (auto) — 2026-05-31 [Claude]` (16 slides, full metadata,
+  per-slide camera-fit viewpoints)
+- Classifications `Skiplum_ARK_Space` (274 classes), `Skiplum_ARK_Storey_Full` (8 classes),
+  `Skiplum_ARK_Storey` (capped probe — can delete)
+- LBK_RIVv_C discipline = VENTILATION
+
+If left unsaved, the next session can recreate everything in 1-2 minutes from the
+on-disk indexes (the ruleset clone, the bulk-classify calls, the slide-add loop).
+
+**Resume from cold next session**:
+```bash
+cd c:/workspace/toolkit/solibri
+python cli.py up                                  # check state
+python cli.py launch --open "C:/tmp/lbk_claude/LBK_C_SAMLETMODELL_Ed_claude.smc"
+python cli.py su rulesets                         # 3 (pre-clone state on disk)
+python cli.py su classifications                  # 4 (pre-author state on disk)
+```
+
+Next high-value moves (each small, restart-friendly):
+- Bulk-set every submodel discipline from `{name pattern → discipline}` (RIVv→VENTILATION,
+  RIVr→PLUMBING, RIE→ELECTRICAL, ARK→ARCHITECTURE, RIB→STRUCTURAL_ELEMENTS, LARK→LANDSCAPE).
+- Regenerate the Plan 1 review deck **grouped per ARK space**, using the new classification.
+- Author a discipline-+-space-scoped ruleset (combines `Skiplum_ARK_Space` filter with
+  discipline filters in the rule JSON).
+- BCF/CDE sync wave-3 (the deeper item: list servers, pull issues + users + comments).
+
+Last commits: toolkit `e0c25b7` (worklog + ifc_catalog), plugin `0d8defc` (4 endpoints).
 
 Next high-value moves (each small, restart-friendly):
 - Bulk-set every submodel discipline from `{name pattern → discipline}` (RIVv→VENTILATION,
