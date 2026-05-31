@@ -306,6 +306,16 @@ def cmd_su(args):
     elif s == "ruleset-install":
         with open(args.file, "r", encoding="utf-8") as fh:
             _dump(sc.install_ruleset(fh.read()))
+    elif s == "disciplines":
+        _dump(sc.disciplines())
+    elif s == "model-metadata":
+        _dump(sc.model_metadata(args.uuid))
+    elif s == "set-discipline":
+        _dump(sc.set_discipline(args.uuid, args.value))
+    elif s == "classify-bulk":
+        with open(args.file, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        _dump(sc.create_classification_bulk(payload["name"], payload["assignments"]))
     # ito-full-coverage
     elif s == "ito":
         r = sc.ito()
@@ -441,6 +451,10 @@ def main(argv=None):
     spsa = su_sub.add_parser("slide-add"); spsa.add_argument("presentation_id"); spsa.add_argument("--title", required=True); spsa.add_argument("--description", default=None); spsa.add_argument("--status", default=None); spsa.add_argument("--stage", default=None); spsa.add_argument("--priority", default=None); spsa.add_argument("--type", dest="slide_type", default=None); spsa.add_argument("--due", dest="due_date", default=None, help="ISO date YYYY-MM-DD"); spsa.add_argument("--component", action="append", default=[], help="IFC GUID (repeatable)"); spsa.add_argument("--responsibility", action="append", default=[]); spsa.add_argument("--label", action="append", default=[])
     sbcf = su_sub.add_parser("bcfxml-export"); sbcf.add_argument("file"); sbcf.add_argument("--version", default="V2_1", choices=["V1_0","V2_0","V2_1","V3_0"]); sbcf.add_argument("--scope", default="ALL", choices=["ALL","SELECTED","MARKED"])
     sri = su_sub.add_parser("ruleset-install"); sri.add_argument("file", help="path to a ruleset JSON file (Ruleset.toJson() shape)")
+    su_sub.add_parser("disciplines")
+    smd = su_sub.add_parser("model-metadata"); smd.add_argument("uuid")
+    ssd = su_sub.add_parser("set-discipline"); ssd.add_argument("uuid"); ssd.add_argument("value", help="e.g. ARCHITECTURE, VENTILATION, STRUCTURAL_ELEMENTS")
+    scb = su_sub.add_parser("classify-bulk"); scb.add_argument("file", help="JSON file: {name, assignments:{className:[guid,...]}}")
     # ito-full-coverage (wave 1)
     su_sub.add_parser("ito")
     sic = su_sub.add_parser("ito-calculate"); sic.add_argument("--id", help="ItoDefinition UUID; omit to calculate all"); sic.add_argument("--yes", action="store_true", help="required (blocks, mutates live ITO state)")

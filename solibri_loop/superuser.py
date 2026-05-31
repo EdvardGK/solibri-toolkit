@@ -334,6 +334,32 @@ class SuperuserClient:
         target = 'selection' | 'model'. -> {fit, target, components}."""
         return self._post("threed/fit", query={"target": target}) or {}
 
+    # ---- model discipline + metadata ------------------------------------
+    def disciplines(self) -> dict:
+        """List the valid BuildingIndustryDomains values (for set_discipline)."""
+        return self._get("disciplines") or {}
+
+    def model_metadata(self, submodel_uuid: str) -> dict:
+        """Read a submodel's metadata map (note: discipline is NOT stored here -
+        Solibri tracks discipline via a separate internal mechanism)."""
+        return self._get(f"models/{submodel_uuid}/metadata") or {}
+
+    def set_discipline(self, submodel_uuid: str, value: str) -> dict:
+        """Set a submodel's discipline via internal DisciplineTrackingUtil. DISRUPTIVE.
+        `value` must be one of disciplines()['disciplines'] (e.g. VENTILATION, ARCHITECTURE)."""
+        return self._post(f"models/{submodel_uuid}/discipline", query={"value": value}) or {}
+
+    # ---- classification authoring (DISRUPTIVE: adds new classification to project) ---
+    def create_classification_bulk(self, name: str, assignments: dict) -> dict:
+        """Create a classification programmatically and bulk-assign GUIDs per class.
+        `assignments` = {className: [guid, guid, ...], ...}. DISRUPTIVE.
+        Uses ClassificationPlugin.createClassificationIfNeeded + setClassification +
+        addClassificationToModel internally. Body can be multi-MB; timeout is generous."""
+        body = json.dumps({"name": name, "assignments": assignments}).encode("utf-8")
+        _, resp = self._request("POST", "classifications/createBulk", data=body,
+                                 headers={"Content-Type": "application/json"}, timeout=600)
+        return json.loads(resp.decode("utf-8")) if resp else {}
+
     # ---- ruleset authoring (DISRUPTIVE: attaches new ruleset to open project) -----
     def install_ruleset(self, ruleset_json: str | dict, timeout: float = 300.0) -> dict:
         """Install a ruleset into the open project from its JSON definition.
