@@ -165,6 +165,175 @@ class SuperuserClient:
     def close_project(self) -> dict:
         return self._post("projects/close") or {}
 
+    # ---- checking-results-decisions (wave 1) --------------
+    def results_full(self) -> dict:
+        """Deep checking results: per Result adds category/categories, decision, involved
+        models, hasCustomUniqueKey, componentDecisions, componentSlides, slide ref. Heavier
+        payload than results(); resilient (bad results counted in `skipped`)."""
+        return self._get("results/full", timeout=180) or {}
+
+    def results_by_rule(self, rule: str, full: bool = False) -> dict:
+        """Filter checking results by exact Rule name. full=True uses the deep serializer.
+        -> {count, scanned, skipped, rule, results:[...]}"""
+        q: dict = {"rule": rule}
+        if full:
+            q["full"] = "1"
+        return self._get("results/byRule", query=q, timeout=180) or {}
+
+    def results_by_severity(self, sev: str, full: bool = False) -> dict:
+        """Filter checking results by Severity (CRITICAL|MODERATE|LOW|PASSED, case-insensitive).
+        full=True uses the deep serializer. -> {count, scanned, skipped, severity, results}."""
+        q: dict = {"sev": sev}
+        if full:
+            q["full"] = "1"
+        return self._get("results/bySeverity", query=q, timeout=180) or {}
+
+    def set_result_decision(self, unique_key: str, decision: str) -> dict:
+        """Set Decision on a Result (ACCEPTED|REJECTED|UNDEFINED). DISRUPTIVE (mutates session
+        QA state). -> {uniqueKey, before, requested, after}."""
+        path = f"results/{urllib.parse.quote(unique_key, safe='')}/decision"
+        return self._post(path, query={"decision": decision}) or {}
+
+    # ---- checking-rules-parameters (wave 1) ---------------
+    # ---- rules (read-only) ----------------------------------------------
+    def rules(self) -> dict:
+        """Flat list of all Rule nodes across rulesets -> {count, rules:[{name,ruleset,helpUrl,parameters:[{id,type,value}]}]}."""
+        return self._get("rules", timeout=60) or {}
+
+    def rule_parameters(self, rule_name: str) -> dict:
+        """Inspect a single rule's parameter list (id, type, value, options, pset/prop)."""
+        return self._get(f"rules/{urllib.parse.quote(rule_name, safe='')}/parameters",
+                          timeout=30) or {}
+
+    def set_rule_parameters(self, rule_name: str, values: dict) -> dict:
+        """Patch RuleParameter values. DISRUPTIVE (mutates ruleset state in-session).
+
+        values: {parameter_id: value}. Booleans/ints/doubles/strings accepted; coerced to
+        string on the wire and parsed back to the parameter's native type by the plugin.
+        Returns {appliedCount, failedCount, applied:[{id,value}], failed:[{id,error}]}."""
+        body = json.dumps({k: ("true" if v is True else "false" if v is False else str(v))
+                            for k, v in values.items()}).encode("utf-8")
+        return self._post(f"rules/{urllib.parse.quote(rule_name, safe='')}/parameters",
+                           data=body, timeout=30) or {}
+
+    def rule_components(self, rule_name: str, status: str = "checked",
+                          limit: int = 5000) -> dict:
+        """Per-rule component GUIDs. status = passed | failed | checked.
+        -> {rule, status, total, returned, limit, guids:[...]}"""
+        return self._get(f"rules/{urllib.parse.quote(rule_name, safe='')}/components",
+                          query={"status": status, "limit": limit}, timeout=60) or {}
+
+    # ---- coordination-presentations-slides (wave 1) -------
+    def presentations(self) -> dict:
+        """List presentations in the open project: {count, presentations:[{uniqueId,name,slideCount}]}."""
+        return self._get("presentations") or {}
+
+    def presentation_slides(self, presentation_id: str) -> dict:
+        """List slides in a presentation: {presentationId,count,slides:[{uniqueId,title,status,stage,priority,type,dueDate,viewpointCount,commentCount,components}]}."""
+        return self._get(f"presentations/{urllib.parse.quote(presentation_id, safe='')}/slides",
+                          timeout=60) or {}
+
+    def create_presentation(self, name: str, prefix: Optional[str] = None) -> dict:
+        """Create a new Presentation in the open project. DISRUPTIVE."""
+        body = {"name": name}
+        if prefix:
+            body["prefix"] = prefix
+        data = json.dumps(body).encode("utf-8")
+        return self._post("presentations", data=data) or {}
+
+    def add_slide(self, presentation_id: str, slide: dict) -> dict:
+        """Add a Slide to a presentation. DISRUPTIVE.
+
+        slide fields: title, description, status, stage, priority, type, dueDate (ISO),
+        components (IFC GUIDs), responsibilities, labels."""
+        data = json.dumps(slide).encode("utf-8")
+        return self._post(f"presentations/{urllib.parse.quote(presentation_id, safe='')}/slides",
+                           data=data, timeout=120) or {}
+
+    def export_bcfxml(self, file: str, version: str = "V2_1", scope: str = "ALL") -> dict:
+        """Export the open project's presentations as a BCF XML zip to disk.
+
+        version = V1_0|V2_0|V2_1|V3_0, scope = ALL|SELECTED|MARKED."""
+        return self._post("bcfxml/export",
+                          query={"file": file, "version": version, "scope": scope},
+                          timeout=300) or {}
+
+    # ---- ito-full-coverage (wave 1) -----------------------
+    def ito(self) -> dict:
+        """List ItoDefinitions in the open project: {count, definitions:[{id,name,description}]}."""
+        return self._get("ito") or {}
+
+    def ito_calculate(self, ito_id: Optional[str] = None, timeout: float = 1800.0) -> dict:
+        """Calculate all ITOs (id=None) or one by UUID. DISRUPTIVE: blocks until the takeoff completes, may take minutes on large models. -> {calculated, definitions, rows, elapsedMs}."""
+        q = {"id": ito_id} if ito_id else None
+        return self._post("ito/calculate", query=q, timeout=timeout) or {}
+
+    def ito_results(self) -> dict:
+        """Current ITO results: {columns:[{name,type,numeric}], count, skipped, rows:[[cell,...]], total:[cell,...]|null}. Cell values are JSON-typed via ItoColumn.PropertyType (numbers as numbers, booleans as booleans, everything else stringified)."""
+        return self._get("ito/results", timeout=120) or {}
+
+    # ---- project-save-metadata (wave 1) -------------------
+    # ---- project metadata / lifecycle (read + save) ---------------------
+    def project_info(self) -> dict:
+        """Project metadata: file, fileStatus (NO_FILE/UNSAVED/SAVED/MODIFIED), lastSaveTime,
+        industry, product/version. Returns {"open": False} when nothing is loaded."""
+        return self._get("project/info") or {}
+
+    def project_save(self, timeout: float = 600.0) -> dict:
+        """Save the open project back to its current file. DISRUPTIVE (writes to disk).
+        Returns 409 if the project has no file yet - use project_save_as(path) instead."""
+        return self._post("project/save", timeout=timeout) or {}
+
+    def project_save_as(self, path: str, timeout: float = 600.0) -> dict:
+        """Save the open project to a new .smc / .smcx file. DISRUPTIVE (writes to disk;
+        Solibri's notion of the project's file path becomes `path`)."""
+        return self._post("project/saveAs", query={"path": path}, timeout=timeout) or {}
+
+    def project_set_industry(self, value: str) -> dict:
+        """Set Project.Industry. value in {UNDEFINED, ARCHITECTURE, ENGINEERING, CONSULTING,
+        CONSTRUCTION, OTHER_AEC}. DISRUPTIVE (mutates project metadata; persists on next save)."""
+        return self._post("project/industry", query={"value": value}) or {}
+
+    # ---- threed-camera-snapshots (wave 1) -----------------
+    def threed_camera(self) -> dict:
+        """Current 3D camera: {location, direction, up, projection?, fieldOfView?|viewToWorldScale?}."""
+        return self._get("threed/camera") or {}
+
+    def set_threed_camera(self, location: list[float], direction: list[float],
+                          up: list[float], projection: str = "perspective",
+                          field_of_view: float | None = None,
+                          view_to_world_scale: float | None = None) -> dict:
+        """Apply a 3D camera state. DISRUPTIVE (UI). projection = perspective|orthogonal;
+        supply field_of_view (radians) for perspective or view_to_world_scale for orthogonal."""
+        payload: dict = {
+            "location": list(location),
+            "direction": list(direction),
+            "up": list(up),
+            "projection": projection,
+        }
+        if field_of_view is not None:
+            payload["fieldOfView"] = field_of_view
+        if view_to_world_scale is not None:
+            payload["viewToWorldScale"] = view_to_world_scale
+        data = json.dumps(payload).encode("utf-8")
+        return self._post("threed/camera", data=data) or {}
+
+    def threed_snapshot(self, file: str, width: int | None = None,
+                        height: int | None = None) -> dict:
+        """Save a PNG of the current 3D viewport to `file`. DISRUPTIVE (touches disk).
+        Optional width/height resize the captured image. -> {saved,path,width,height,size}."""
+        q: dict = {"file": file}
+        if width is not None:
+            q["width"] = width
+        if height is not None:
+            q["height"] = height
+        return self._post("threed/snapshot", query=q, timeout=60) or {}
+
+    def threed_fit(self, target: str = "selection") -> dict:
+        """Fit the 3D camera to the current selection or the whole model. DISRUPTIVE (UI).
+        target = 'selection' | 'model'. -> {fit, target, components}."""
+        return self._post("threed/fit", query={"target": target}) or {}
+
     # ---- lifecycle (DISRUPTIVE: closes the whole application) -----------
     def shutdown(self, force: bool = False) -> dict:
         """Stop the running Solibri instance. force=False is graceful (SMC.shutdown);

@@ -206,6 +206,178 @@ def cmd_su(args):
         _dump(sc.check())
     elif s == "close":
         _dump(sc.close_project())
+    # checking-results-decisions
+    elif s == "results-full":
+        r = sc.results_full()
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('count', 0)} results, {r.get('skipped', 0)} skipped")
+        if args.json:
+            _dump(r)
+    elif s == "results-by-rule":
+        r = sc.results_by_rule(args.rule, full=args.full)
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('count', 0)}/{r.get('scanned', 0)} match rule {args.rule!r}, {r.get('skipped', 0)} skipped")
+        if args.json:
+            _dump(r)
+    elif s == "results-by-severity":
+        r = sc.results_by_severity(args.sev, full=args.full)
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('count', 0)}/{r.get('scanned', 0)} match severity {r.get('severity', args.sev)}")
+        if args.json:
+            _dump(r)
+    elif s == "decision":
+        r = sc.set_result_decision(args.unique_key, args.decision)
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('uniqueKey')}: {r.get('before')!r} -> {r.get('after')!r} (requested {r.get('requested')!r})")
+    # checking-rules-parameters
+    elif s == "rules":
+        r = sc.rules()
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('count', 0)} rules")
+        if args.json:
+            _dump(r)
+        else:
+            for rule in r.get("rules", []):
+                print(f"  [{rule.get('ruleset','')}] {rule.get('name','')}"
+                      f"  ({len(rule.get('parameters', []))} params)")
+    elif s == "rule-params":
+        if args.set:
+            if not args.yes:
+                print("Refusing to patch rule parameters without --yes (mutates ruleset state).",
+                      file=sys.stderr); return 2
+            patches = {}
+            for kv in args.set:
+                if "=" not in kv:
+                    print(f"--set expects ID=VAL, got: {kv}", file=sys.stderr); return 2
+                k, v = kv.split("=", 1)
+                patches[k.strip()] = v
+            _dump(sc.set_rule_parameters(args.rule, patches))
+        else:
+            _dump(sc.rule_parameters(args.rule))
+    elif s == "rule-components":
+        r = sc.rule_components(args.rule, args.status, args.limit)
+        if "error" in r:
+            print("ERROR:", r["error"], file=sys.stderr); return 1
+        print(f"{r.get('returned', 0)} of {r.get('total', 0)} {args.status} components for rule {args.rule!r}")
+        if args.json:
+            _dump(r)
+        else:
+            for g in r.get("guids", []):
+                print(" ", g)
+    # coordination-presentations-slides
+    elif s == "presentations":
+        r = sc.presentations()
+        print(f"{r.get('count', 0)} presentation(s)")
+        for p in r.get("presentations", []):
+            print(f"  {p.get('uniqueId')}  [{p.get('slideCount', 0):>3} slides]  {p.get('name')}")
+    elif s == "slides":
+        r = sc.presentation_slides(args.presentation_id)
+        print(f"{r.get('count', 0)} slide(s) in {r.get('presentationId', args.presentation_id)}")
+        for sl in r.get("slides", []):
+            print(f"  {sl.get('uniqueId')}  [{sl.get('status','')}] {sl.get('title','')}"
+                  f"  ({len(sl.get('components', []))} components)")
+        if args.json:
+            _dump(r)
+    elif s == "presentation-create":
+        _dump(sc.create_presentation(args.name, args.prefix))
+    elif s == "slide-add":
+        slide = {"title": args.title}
+        if args.description is not None: slide["description"] = args.description
+        if args.status is not None: slide["status"] = args.status
+        if args.stage is not None: slide["stage"] = args.stage
+        if args.priority is not None: slide["priority"] = args.priority
+        if args.slide_type is not None: slide["type"] = args.slide_type
+        if args.due_date is not None: slide["dueDate"] = args.due_date
+        if args.component: slide["components"] = args.component
+        if args.responsibility: slide["responsibilities"] = args.responsibility
+        if args.label: slide["labels"] = args.label
+        _dump(sc.add_slide(args.presentation_id, slide))
+    elif s == "bcfxml-export":
+        r = sc.export_bcfxml(args.file, args.version, args.scope)
+        if r.get("exported"):
+            print(f"wrote {r.get('size', 0)} bytes -> {r.get('path')}  [{r.get('version')}/{r.get('scope')}]")
+        else:
+            _dump(r)
+    # ito-full-coverage
+    elif s == "ito":
+        r = sc.ito()
+        print(f"{r.get('count', 0)} ITO definition(s)")
+        for d in r.get("definitions", []):
+            print(f"  {d.get('id')}  {d.get('name')}")
+        _dump(r)
+    elif s == "ito-calculate":
+        if not args.yes:
+            print("Refusing to calculate ITO without --yes (blocks the session until done).", file=sys.stderr); return 2
+        r = sc.ito_calculate(args.id)
+        _dump(r)
+    elif s == "ito-results":
+        r = sc.ito_results()
+        cols = [c.get("name") for c in r.get("columns", [])]
+        print(f"{r.get('count', 0)} row(s), {r.get('skipped', 0)} skipped, columns: {cols}")
+        if args.json:
+            _dump(r)
+    # project-save-metadata
+    elif s == "project-info":
+        _dump(sc.project_info())
+    elif s == "project-save":
+        if not args.yes:
+            print("Refusing to save without --yes (writes to disk).", file=sys.stderr); return 2
+        _dump(sc.project_save())
+    elif s == "project-save-as":
+        if not args.yes:
+            print("Refusing to save-as without --yes (writes a new .smc to disk).", file=sys.stderr); return 2
+        _dump(sc.project_save_as(args.path))
+    elif s == "project-industry":
+        _dump(sc.project_set_industry(args.value))
+    # threed-camera-snapshots
+    elif s == "threed-camera":
+        r = sc.threed_camera()
+        loc = r.get("location"); d = r.get("direction"); u = r.get("up")
+        if not r:
+            print("no camera data")
+        elif r.get("open") is False:
+            print("no project open")
+        else:
+            print(f"projection: {r.get('projection', 'unknown')}")
+            print(f"location  : {loc}")
+            print(f"direction : {d}")
+            print(f"up        : {u}")
+            if "fieldOfView" in r:
+                print(f"fov (rad) : {r['fieldOfView']}")
+            if "viewToWorldScale" in r:
+                print(f"v2wScale  : {r['viewToWorldScale']}")
+        if args.json:
+            _dump(r)
+    elif s == "threed-camera-set":
+        def _xyz(spec: str) -> list[float]:
+            parts = [p.strip() for p in spec.split(",")]
+            if len(parts) != 3:
+                raise ValueError(f"expected 3 comma-separated numbers, got {spec!r}")
+            return [float(p) for p in parts]
+        _dump(sc.set_threed_camera(_xyz(args.location), _xyz(args.direction), _xyz(args.up),
+                                    projection=args.projection,
+                                    field_of_view=args.fov,
+                                    view_to_world_scale=args.scale))
+    elif s == "threed-snapshot":
+        r = sc.threed_snapshot(args.file, width=args.width, height=args.height)
+        if r.get("saved"):
+            print(f"wrote {r.get('size')} bytes to {r.get('path')} ({r.get('width')}x{r.get('height')})")
+        else:
+            print("snapshot failed:", r.get("error", r))
+            return 1
+        _dump(r)
+    elif s == "threed-fit":
+        r = sc.threed_fit(args.target)
+        if r.get("fit"):
+            print(f"fitted to {r.get('target')} ({r.get('components')} component(s))")
+        else:
+            print("fit failed:", r.get("error", r))
+            return 1
     return 0
 
 
@@ -250,6 +422,45 @@ def main(argv=None):
     sop = su_sub.add_parser("open"); sop.add_argument("path"); sop.add_argument("--name")
     sck = su_sub.add_parser("check"); sck.add_argument("--yes", action="store_true")
     su_sub.add_parser("close")
+    # checking-results-decisions (wave 1)
+    srf = su_sub.add_parser("results-full"); srf.add_argument("--json", action="store_true")
+    srbr = su_sub.add_parser("results-by-rule"); srbr.add_argument("rule"); srbr.add_argument("--full", action="store_true"); srbr.add_argument("--json", action="store_true")
+    srbs = su_sub.add_parser("results-by-severity"); srbs.add_argument("sev", choices=["CRITICAL", "MODERATE", "LOW", "PASSED", "critical", "moderate", "low", "passed"]); srbs.add_argument("--full", action="store_true"); srbs.add_argument("--json", action="store_true")
+    sdec = su_sub.add_parser("decision"); sdec.add_argument("unique_key"); sdec.add_argument("decision", choices=["ACCEPTED", "REJECTED", "UNDEFINED", "accepted", "rejected", "undefined"])
+    # checking-rules-parameters (wave 1)
+    sru = su_sub.add_parser("rules"); sru.add_argument("--json", action="store_true")
+    srp = su_sub.add_parser("rule-params"); srp.add_argument("rule"); srp.add_argument("--set", action="append", default=[], metavar="ID=VAL", help="patch a parameter (repeatable)"); srp.add_argument("--yes", action="store_true", help="required with --set (DISRUPTIVE)")
+    src = su_sub.add_parser("rule-components"); src.add_argument("rule"); src.add_argument("--status", default="checked", choices=["passed","failed","checked"]); src.add_argument("--limit", type=int, default=5000); src.add_argument("--json", action="store_true")
+    # coordination-presentations-slides (wave 1)
+    su_sub.add_parser("presentations")
+    spsl = su_sub.add_parser("slides"); spsl.add_argument("presentation_id"); spsl.add_argument("--json", action="store_true")
+    spcr = su_sub.add_parser("presentation-create"); spcr.add_argument("name"); spcr.add_argument("--prefix", default=None)
+    spsa = su_sub.add_parser("slide-add"); spsa.add_argument("presentation_id"); spsa.add_argument("--title", required=True); spsa.add_argument("--description", default=None); spsa.add_argument("--status", default=None); spsa.add_argument("--stage", default=None); spsa.add_argument("--priority", default=None); spsa.add_argument("--type", dest="slide_type", default=None); spsa.add_argument("--due", dest="due_date", default=None, help="ISO date YYYY-MM-DD"); spsa.add_argument("--component", action="append", default=[], help="IFC GUID (repeatable)"); spsa.add_argument("--responsibility", action="append", default=[]); spsa.add_argument("--label", action="append", default=[])
+    sbcf = su_sub.add_parser("bcfxml-export"); sbcf.add_argument("file"); sbcf.add_argument("--version", default="V2_1", choices=["V1_0","V2_0","V2_1","V3_0"]); sbcf.add_argument("--scope", default="ALL", choices=["ALL","SELECTED","MARKED"])
+    # ito-full-coverage (wave 1)
+    su_sub.add_parser("ito")
+    sic = su_sub.add_parser("ito-calculate"); sic.add_argument("--id", help="ItoDefinition UUID; omit to calculate all"); sic.add_argument("--yes", action="store_true", help="required (blocks, mutates live ITO state)")
+    sir = su_sub.add_parser("ito-results"); sir.add_argument("--json", action="store_true")
+    # project-save-metadata (wave 1)
+    su_sub.add_parser("project-info")
+    sps = su_sub.add_parser("project-save"); sps.add_argument("--yes", action="store_true")
+    spsa = su_sub.add_parser("project-save-as"); spsa.add_argument("path"); spsa.add_argument("--yes", action="store_true")
+    spi = su_sub.add_parser("project-industry"); spi.add_argument("value", choices=["UNDEFINED","ARCHITECTURE","ENGINEERING","CONSULTING","CONSTRUCTION","OTHER_AEC"])
+    # threed-camera-snapshots (wave 1)
+    stcg = su_sub.add_parser("threed-camera"); stcg.add_argument("--json", action="store_true")
+    stcs = su_sub.add_parser("threed-camera-set")
+    stcs.add_argument("--location", required=True, help="x,y,z")
+    stcs.add_argument("--direction", required=True, help="x,y,z")
+    stcs.add_argument("--up", required=True, help="x,y,z")
+    stcs.add_argument("--projection", default="perspective", choices=["perspective", "orthogonal"])
+    stcs.add_argument("--fov", type=float, default=None, help="field of view in radians (perspective)")
+    stcs.add_argument("--scale", type=float, default=None, help="view-to-world scale (orthogonal)")
+    stsn = su_sub.add_parser("threed-snapshot")
+    stsn.add_argument("file", help="output PNG path")
+    stsn.add_argument("--width", type=int, default=None)
+    stsn.add_argument("--height", type=int, default=None)
+    stft = su_sub.add_parser("threed-fit")
+    stft.add_argument("--target", default="selection", choices=["selection", "model"])
 
     # built-in 10876
     sub.add_parser("status")
