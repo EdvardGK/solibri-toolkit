@@ -134,15 +134,16 @@ Checkpoint, CDE. The Open Model UI is `modelchecker.plugins.fileplugin.ui.FileVi
 - Lifecycle driven by me end-to-end (empty NO_FILE session, nothing to lose): deploy jar →
   `cli.py shutdown` (graceful) → `cli.py launch` → plugin up v26.4.1.108.
 
-## State — PENDING edkjo's eyes
+## State — CONFIRMED LIVE (2026-06-20)
 
-- Need visual confirmation in Solibri's Open Model browser: does **"Skiplum Projects"** appear as
-  a tab next to Files/Recent/SharePoint/ACC, does the tree browse client-projects, and does
-  double-click / Open actually load a model? Those three are the only things the headless check
-  can't prove.
-- If the tab is blank or mis-placed: candidates are `getPanel()` vs `getResourceProviderUI()`
-  being the tab-content entrypoint (I hedged by putting a browser in both), and `getPriority()`
-  for tab order (not overridden yet).
+- edkjo confirmed the **"Skiplum Projects"** tab has been showing up in Solibri's Open Model
+  browser "since two days ago or something" — i.e. it appeared as soon as the jar was deployed
+  and has persisted across launches. The tab build is DONE end-to-end (headless `/integrations`
+  health check + visual confirmation).
+- (Original PENDING items, now resolved:) needed eyes on whether the tab appears next to
+  Files/Recent/SharePoint/ACC, browses client-projects, and loads a model on double-click.
+  The `getPanel()` vs `getResourceProviderUI()` hedge held; `getPriority()` tab-order was never
+  needed.
 
 ## Files (integration)
 
