@@ -92,6 +92,15 @@ class SuperuserClient:
         """Solibri's recent-files lists (incl. provider=BIM360 = ACC handshake)."""
         return self._get("recents") or {}
 
+    def add_recent_directory(self, path: str, key: str = "model") -> dict:
+        """Pin a folder into Solibri's recent-directories registry so it shows up as a
+        quick-access location in the Open Model browser (and other file choosers for that
+        key). key defaults to "model" (the model-open chooser, stored as <ver>-model-dir-N).
+        Persists to Java Preferences, so it survives restarts; idempotent (re-adding just
+        refreshes the timestamp). DISRUPTIVE (mutates Solibri's persisted UI state).
+        -> {added, key, recentDirCount}."""
+        return self._post("recents/add-directory", query={"path": path, "key": key}) or {}
+
     # ---- rulesets (read-only) -------------------------------------------
     def rulesets(self, with_json: bool = False) -> list:
         """List rulesets in the open project. with_json=True includes the full rule
@@ -118,6 +127,13 @@ class SuperuserClient:
         """For each IFC GUID, how many components the model holds (dedup probe).
         -> {requested, totalComponentsInModel, results:[{guid,countInModel,type,name}]}."""
         return self._get("component", query={"guid": ",".join(guids)}, timeout=120) or {}
+
+    def components_bbox(self, guids: list[str]) -> dict:
+        """Per-GUID world axis-aligned bounding box + type/name/model. Single off-EDT model
+        pass; batch the GUID list. -> {count, boxes:[{guid,type,name,model,min:[x,y,z],
+        max:[x,y,z],center:[x,y,z]}]}. min/max in model units (mm). Powers orientation
+        (wall normal = thin axis, run = long axis) + spatial duplicate detection."""
+        return self._get("components/bbox", query={"guid": ",".join(guids)}, timeout=120) or {}
 
     # ---- classifications (read; load/save mutate the session) -----------
     def classifications(self) -> dict:

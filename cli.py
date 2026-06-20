@@ -19,6 +19,7 @@ Plugin (port 10999, works on any launch - no .bat needed):
     python cli.py su components --pset PS --prop P [--value V --op OP --limit N]
     python cli.py su component GUID...   # count each GUID in the model (dedup probe)
     python cli.py su recents             # recent files (incl. ACC/BIM360)
+    python cli.py su recents-add DIR [--key model]  # pin a folder into the Open Model browser
     python cli.py su select GUID...      # set selection basket [DISRUPTIVE]
     python cli.py su open PATH [--name N] # open .smc/.smcx (project) or .ifc (add) [DISRUPTIVE]
     python cli.py su check --yes         # RUN checking [DISRUPTIVE, slow]
@@ -195,6 +196,8 @@ def cmd_su(args):
         _dump(sc.component(args.guids))
     elif s == "recents":
         _dump(sc.recents())
+    elif s == "recents-add":
+        _dump(sc.add_recent_directory(args.path, args.key))
     elif s == "select":
         _dump(sc.select(args.guids))
     elif s == "open":
@@ -431,6 +434,7 @@ def main(argv=None):
     scp.add_argument("--limit", type=int, default=200)
     scc = su_sub.add_parser("component"); scc.add_argument("guids", nargs="+")
     su_sub.add_parser("recents")
+    sra = su_sub.add_parser("recents-add"); sra.add_argument("path", help="folder to pin into the Open Model browser's recent locations"); sra.add_argument("--key", default="model", help="recents category (default: model)")
     ssel = su_sub.add_parser("select"); ssel.add_argument("guids", nargs="+")
     sop = su_sub.add_parser("open"); sop.add_argument("path"); sop.add_argument("--name")
     sck = su_sub.add_parser("check"); sck.add_argument("--yes", action="store_true")
