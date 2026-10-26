@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "solibri": {
+      "command": "python",
+      "args": ["-m", "solibri_loop.mcp_server"],
+      "env": {
+        "PYTHONPATH": "C:/workspace/toolkit/solibri",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
